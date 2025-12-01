@@ -61,3 +61,26 @@ func (c *LockClient) TryXLock(ctx context.Context, params TryXLockParams) (TryXL
 
 	return TryXLockResult{ExpiresAt: expires, Acquired: true}, nil
 }
+
+type ReleaseXLockParams struct {
+	Name  string // Lock Name: unique identifier for the lock
+	Owner string // Lock Owner: identifier for the entity releasing the lock
+}
+
+type ReleaseXLockResult struct {
+	Released bool // Whether the lock was released
+}
+
+// Unlock releases the lock if we still own it.
+// Returns whether the lock was released and any error.
+func (c *LockClient) ReleaseXLock(ctx context.Context, params ReleaseXLockParams) (ReleaseXLockResult, error) {
+	tableName := c.options.LockTableName
+
+	query := fmt.Sprintf(`DELETE FROM %s WHERE name = $1 AND owner = $2;`, tableName)
+	res, err := c.db.ExecContext(ctx, query, params.Name, params.Owner)
+	if err != nil {
+		return ReleaseXLockResult{}, err
+	}
+	rowsAffected, _ := res.RowsAffected()
+	return ReleaseXLockResult{Released: rowsAffected > 0}, nil
+}
