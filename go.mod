@@ -1,4 +1,4 @@
-module github.com/myyrakle/pglock
+module github.com/myyrakle/pgxlock
 
 go 1.23
 

@@ -1,1 +1,2 @@
-# pglock
+# pgxlock
+- Exclusive lock implementation using PostgreSQL

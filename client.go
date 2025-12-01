@@ -1,6 +1,7 @@
 package pglock
 
 import (
+	"context"
 	"database/sql"
 	"log"
 
@@ -8,9 +9,13 @@ import (
 )
 
 type LockClientOptions struct {
+	DatabaseURL        string // [required] example: "postgres://user:password@localhost:5432/dbname"
 	MaxOpenConnections int    // [optional] default: 10
 	MaxIdleConnections int    // [optional] default: 5
-	DatabaseURL        string // [required] example: "postgres://user:password@localhost:5432/dbname"
+
+	LockTableName              string // [optional] default: "locks"
+	PriorityLockTableName      string // [optional] default: "priority_locks"
+	PriorityLockQueueTableName string // [optional] default: "priority_lock_queue"
 }
 
 func NewLockClient(options LockClientOptions) LockClient {
@@ -45,7 +50,10 @@ func (c *LockClient) connect() error {
 }
 
 func (c *LockClient) setupTables() error {
-	// Create necessary tables here
+	if err := c.createLockTable(context.Background()); err != nil {
+		return err
+	}
+
 	return nil
 }
 
