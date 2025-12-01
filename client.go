@@ -18,7 +18,29 @@ type LockClientOptions struct {
 	PriorityLockQueueTableName string // [optional] default: "priority_lock_queue"
 }
 
+func (options *LockClientOptions) SetDefaults() {
+	if options.LockTableName == "" {
+		options.LockTableName = "locks"
+	}
+	if options.PriorityLockTableName == "" {
+		options.PriorityLockTableName = "priority_locks"
+	}
+	if options.PriorityLockQueueTableName == "" {
+		options.PriorityLockQueueTableName = "priority_lock_queue"
+	}
+
+	if options.MaxIdleConnections == 0 {
+		options.MaxIdleConnections = 5
+	}
+
+	if options.MaxOpenConnections == 0 {
+		options.MaxOpenConnections = 10
+	}
+}
+
 func NewLockClient(options LockClientOptions) LockClient {
+	options.SetDefaults()
+
 	return LockClient{
 		options: options,
 	}
@@ -36,13 +58,8 @@ func (c *LockClient) connect() error {
 	}
 	defer db.Close()
 
-	if c.options.MaxOpenConnections > 0 {
-		db.SetMaxOpenConns(c.options.MaxOpenConnections)
-	}
-
-	if c.options.MaxIdleConnections > 0 {
-		db.SetMaxIdleConns(c.options.MaxIdleConnections)
-	}
+	db.SetMaxOpenConns(c.options.MaxOpenConnections)
+	db.SetMaxIdleConns(c.options.MaxIdleConnections)
 
 	c.db = db
 
