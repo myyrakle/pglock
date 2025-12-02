@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func (c *LockClient) createLockTable(ctx context.Context) error {
+func (c *lockClient) createLockTable(ctx context.Context) error {
 	tableName := c.options.LockTableName
 
 	createTableSQL := fmt.Sprintf(`
@@ -36,7 +36,7 @@ type TryXLockResult struct {
 
 // TryXLock attempts to acquire a distributed lock.
 // Returns the expiration time, whether the lock was acquired, and any error.
-func (c *LockClient) TryXLock(ctx context.Context, params TryXLockParams) (TryXLockResult, error) {
+func (c *lockClient) TryXLock(ctx context.Context, params TryXLockParams) (TryXLockResult, error) {
 	tableName := c.options.LockTableName
 
 	// Atomic operation: insert if not exists, or update if expired
@@ -73,7 +73,7 @@ type ReleaseXLockResult struct {
 
 // Unlock releases the lock if we still own it.
 // Returns whether the lock was released and any error.
-func (c *LockClient) ReleaseXLock(ctx context.Context, params ReleaseXLockParams) (ReleaseXLockResult, error) {
+func (c *lockClient) ReleaseXLock(ctx context.Context, params ReleaseXLockParams) (ReleaseXLockResult, error) {
 	tableName := c.options.LockTableName
 
 	query := fmt.Sprintf(`DELETE FROM %s WHERE name = $1 AND owner = $2;`, tableName)

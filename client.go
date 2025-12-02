@@ -13,17 +13,17 @@ type LockClientOptions struct {
 	MaxOpenConnections int    // [optional] default: 10
 	MaxIdleConnections int    // [optional] default: 5
 
-	LockTableName              string // [optional] default: "locks"
-	PriorityLockTableName      string // [optional] default: "priority_locks"
+	LockTableName              string // [optional] default: "lock"
+	PriorityLockTableName      string // [optional] default: "priority_lock"
 	PriorityLockQueueTableName string // [optional] default: "priority_lock_queue"
 }
 
 func (options *LockClientOptions) SetDefaults() {
 	if options.LockTableName == "" {
-		options.LockTableName = "locks"
+		options.LockTableName = "lock"
 	}
 	if options.PriorityLockTableName == "" {
-		options.PriorityLockTableName = "priority_locks"
+		options.PriorityLockTableName = "priority_lock"
 	}
 	if options.PriorityLockQueueTableName == "" {
 		options.PriorityLockQueueTableName = "priority_lock_queue"
@@ -41,17 +41,23 @@ func (options *LockClientOptions) SetDefaults() {
 func NewLockClient(options LockClientOptions) LockClient {
 	options.SetDefaults()
 
-	return LockClient{
+	return &lockClient{
 		options: options,
 	}
 }
 
-type LockClient struct {
+type LockClient interface {
+	Initialize() error
+	TryXLock(ctx context.Context, params TryXLockParams) (TryXLockResult, error)
+	ReleaseXLock(ctx context.Context, params ReleaseXLockParams) (ReleaseXLockResult, error)
+}
+
+type lockClient struct {
 	options LockClientOptions
 	db      *sql.DB
 }
 
-func (c *LockClient) connect() error {
+func (c *lockClient) connect() error {
 	db, err := sql.Open("postgres", c.options.DatabaseURL)
 	if err != nil {
 		log.Fatalf("Failed to open database: %v", err)
@@ -66,7 +72,7 @@ func (c *LockClient) connect() error {
 	return nil
 }
 
-func (c *LockClient) setupTables() error {
+func (c *lockClient) setupTables() error {
 	if err := c.createLockTable(context.Background()); err != nil {
 		return err
 	}
@@ -74,7 +80,7 @@ func (c *LockClient) setupTables() error {
 	return nil
 }
 
-func (c *LockClient) Initialize() error {
+func (c *lockClient) Initialize() error {
 	if err := c.connect(); err != nil {
 		return err
 	}
