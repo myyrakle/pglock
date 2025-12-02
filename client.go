@@ -63,7 +63,6 @@ func (c *lockClient) connect() error {
 	if err != nil {
 		log.Fatalf("Failed to open database: %v", err)
 	}
-	defer db.Close()
 
 	db.SetMaxOpenConns(c.options.MaxOpenConnections)
 	db.SetMaxIdleConns(c.options.MaxIdleConnections)
