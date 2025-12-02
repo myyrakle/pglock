@@ -9,7 +9,7 @@
 
 install
 ```bash
-go get github.com/myyrakle/pglock
+go get github.com/myyrakle/pglock@v0.1.0
 ```
 
 configuration 
