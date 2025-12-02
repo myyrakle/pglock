@@ -49,7 +49,8 @@ func NewLockClient(options LockClientOptions) LockClient {
 type LockClient interface {
 	Initialize() error
 	TryXLock(ctx context.Context, params TryXLockParams) (TryXLockResult, error)
-	ReleaseXLock(ctx context.Context, params ReleaseXLockParams) (ReleaseXLockResult, error)
+	XLock(ctx context.Context, params XLockParams) (XLockResult, error)
+	Unlock(ctx context.Context, params UnlockParams) (UnlockResult, error)
 }
 
 type lockClient struct {
