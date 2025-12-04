@@ -58,32 +58,42 @@ func (c *lockClient) TryXLock(ctx context.Context, params TryXLockParams) (TryXL
 
 	tableName := c.options.LockTableName
 
-	// 1. 원자적으로 행 생성 및 잠금 획득 (INSERT ... ON CONFLICT DO UPDATE with RETURNING)
-	acquireRowQuery := fmt.Sprintf(`
+	// 1. lock 행 생성 (없으면)
+	ensureQuery := fmt.Sprintf(`
 		INSERT INTO %s (name, xlock_id, x_expires_at, shared_locks, max_shared_locks)
 		VALUES ($1, NULL, NULL, '[]'::jsonb, -1)
-		ON CONFLICT (name) DO UPDATE
-		SET name = EXCLUDED.name
-		RETURNING xlock_id, x_expires_at, shared_locks;
+		ON CONFLICT (name) DO NOTHING;
+	`, tableName)
+	_, err = tx.ExecContext(ctx, ensureQuery, params.Name)
+	if err != nil {
+		return TryXLockResult{}, err
+	}
+
+	// 2. FOR UPDATE로 행 잠금 및 현재 상태 조회
+	selectQuery := fmt.Sprintf(`
+		SELECT xlock_id, x_expires_at, shared_locks
+		FROM %s
+		WHERE name = $1
+		FOR UPDATE;
 	`, tableName)
 
 	var xlockID sql.NullString
 	var xExpiresAt sql.NullTime
 	var sharedLocksJSON []byte
 
-	err = tx.QueryRowContext(ctx, acquireRowQuery, params.Name).Scan(
+	err = tx.QueryRowContext(ctx, selectQuery, params.Name).Scan(
 		&xlockID, &xExpiresAt, &sharedLocksJSON,
 	)
 	if err != nil {
 		return TryXLockResult{}, err
 	}
 
-	// 2. 기존 XLock 확인
+	// 3. 기존 XLock 확인
 	if xlockID.Valid && xExpiresAt.Valid && xExpiresAt.Time.After(time.Now()) {
 		return TryXLockResult{Acquired: false}, nil
 	}
 
-	// 3. 유효한 SLock 확인
+	// 4. 유효한 SLock 확인
 	var sharedLocks []SharedLockEntry
 	if len(sharedLocksJSON) > 0 {
 		json.Unmarshal(sharedLocksJSON, &sharedLocks)
@@ -96,7 +106,7 @@ func (c *lockClient) TryXLock(ctx context.Context, params TryXLockParams) (TryXL
 		}
 	}
 
-	// 4. XLock 설정
+	// 5. XLock 설정
 	newExpiresAt := time.Now().Add(time.Duration(params.TTLSeconds) * time.Second)
 	updateQuery := fmt.Sprintf(`
 		UPDATE %s
@@ -207,13 +217,24 @@ func (c *lockClient) TrySLock(ctx context.Context, params TrySLockParams) (TrySL
 
 	tableName := c.options.LockTableName
 
-	// 1. 원자적으로 행 생성 및 잠금 획득 (INSERT ... ON CONFLICT DO UPDATE with RETURNING)
-	acquireRowQuery := fmt.Sprintf(`
+	// 1. lock 행 생성 (없으면)
+	ensureQuery := fmt.Sprintf(`
 		INSERT INTO %s (name, xlock_id, x_expires_at, shared_locks, max_shared_locks)
 		VALUES ($1, NULL, NULL, '[]'::jsonb, $2)
-		ON CONFLICT (name) DO UPDATE
-		SET name = EXCLUDED.name
-		RETURNING xlock_id, x_expires_at, shared_locks, max_shared_locks;
+		ON CONFLICT (name) DO NOTHING;
+	`, tableName)
+	_, err = tx.ExecContext(ctx, ensureQuery, params.Name, params.MaxSharedLocks)
+	if err != nil {
+		return TrySLockResult{}, err
+	}
+
+	// 2. FOR UPDATE로 행 잠금 및 현재 상태 조회
+	// 주의: SLock 간에도 JSONB 배열 업데이트 시 race condition 방지를 위해 필요
+	selectQuery := fmt.Sprintf(`
+		SELECT xlock_id, x_expires_at, shared_locks, max_shared_locks
+		FROM %s
+		WHERE name = $1
+		FOR UPDATE;
 	`, tableName)
 
 	var xlockID sql.NullString
@@ -221,19 +242,19 @@ func (c *lockClient) TrySLock(ctx context.Context, params TrySLockParams) (TrySL
 	var sharedLocksJSON []byte
 	var maxSharedLocks int
 
-	err = tx.QueryRowContext(ctx, acquireRowQuery, params.Name, params.MaxSharedLocks).Scan(
+	err = tx.QueryRowContext(ctx, selectQuery, params.Name).Scan(
 		&xlockID, &xExpiresAt, &sharedLocksJSON, &maxSharedLocks,
 	)
 	if err != nil {
 		return TrySLockResult{}, err
 	}
 
-	// 2. XLock 확인
+	// 3. XLock 확인
 	if xlockID.Valid && xExpiresAt.Valid && xExpiresAt.Time.After(time.Now()) {
 		return TrySLockResult{Acquired: false}, nil
 	}
 
-	// 3. 만료되지 않은 SLock만 필터링
+	// 4. 만료되지 않은 SLock만 필터링
 	var sharedLocks []SharedLockEntry
 	if len(sharedLocksJSON) > 0 {
 		json.Unmarshal(sharedLocksJSON, &sharedLocks)
@@ -251,12 +272,12 @@ func (c *lockClient) TrySLock(ctx context.Context, params TrySLockParams) (TrySL
 		}
 	}
 
-	// 4. 개수 제한 확인
+	// 5. 개수 제한 확인
 	if !alreadyHasLock && maxSharedLocks != -1 && len(validLocks) >= maxSharedLocks {
 		return TrySLockResult{Acquired: false}, nil
 	}
 
-	// 5. 새 SLock 추가
+	// 6. 새 SLock 추가
 	newExpiresAt := time.Now().Add(time.Duration(params.TTLSeconds) * time.Second)
 	validLocks = append(validLocks, SharedLockEntry{
 		LockID:    params.LockID,
@@ -265,6 +286,7 @@ func (c *lockClient) TrySLock(ctx context.Context, params TrySLockParams) (TrySL
 
 	newSharedLocksJSON, _ := json.Marshal(validLocks)
 
+	// 7. shared_locks 업데이트
 	updateQuery := fmt.Sprintf(`
 		UPDATE %s
 		SET shared_locks = $1
