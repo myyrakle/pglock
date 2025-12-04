@@ -13,11 +13,11 @@ func (c *lockClient) createLockTable(ctx context.Context) error {
 
 	createTableSQL := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
-		name TEXT PRIMARY KEY,
-		xlock_id TEXT,
-		x_expires_at TIMESTAMPTZ,
-		shared_locks JSONB DEFAULT '[]'::jsonb,
-		max_shared_locks INT DEFAULT -1
+			name TEXT PRIMARY KEY,
+			xlock_id TEXT,
+			x_expires_at TIMESTAMPTZ,
+			shared_locks JSONB DEFAULT '[]'::jsonb,
+			max_shared_locks INT DEFAULT -1
 		);
 	`, tableName)
 
@@ -38,7 +38,7 @@ func (c *lockClient) createLockTable(ctx context.Context) error {
 
 type TryXLockParams struct {
 	Name       string // Lock Name: unique identifier for the lock
-	Owner      string // Lock Owner: identifier for the entity requesting the lock
+	LockID     string // Lock LockID: identifier for the entity requesting the lock
 	TTLSeconds int    // Time-To-Live: duration in seconds for the lock
 }
 
@@ -114,7 +114,7 @@ func (c *lockClient) TryXLock(ctx context.Context, params TryXLockParams) (TryXL
 		WHERE name = $3;
 	`, tableName)
 
-	_, err = tx.ExecContext(ctx, updateQuery, params.Owner, newExpiresAt, params.Name)
+	_, err = tx.ExecContext(ctx, updateQuery, params.LockID, newExpiresAt, params.Name)
 	if err != nil {
 		return TryXLockResult{}, err
 	}
@@ -129,7 +129,7 @@ func (c *lockClient) TryXLock(ctx context.Context, params TryXLockParams) (TryXL
 
 type XLockParams struct {
 	Name             string        // Lock Name: unique identifier for the lock
-	Owner            string        // Lock Owner: identifier for the entity requesting the lock
+	LockID           string        // Lock LockID: identifier for the entity requesting the lock
 	TTLSeconds       int           // Time-To-Live: duration in seconds for the lock
 	IntervalDuration time.Duration // Retry interval duration
 }
@@ -143,7 +143,7 @@ func (c *lockClient) XLock(ctx context.Context, params XLockParams) (XLockResult
 	for {
 		result, err := c.TryXLock(ctx, TryXLockParams{
 			Name:       params.Name,
-			Owner:      params.Owner,
+			LockID:     params.LockID,
 			TTLSeconds: params.TTLSeconds,
 		})
 		if err != nil {
@@ -164,8 +164,8 @@ func (c *lockClient) XLock(ctx context.Context, params XLockParams) (XLockResult
 }
 
 type UnlockParams struct {
-	Name  string // Lock Name: unique identifier for the lock
-	Owner string // Lock Owner: identifier for the entity releasing the lock
+	Name   string // Lock Name: unique identifier for the lock
+	LockID string // Lock LockID: identifier for the entity releasing the lock
 }
 
 type UnlockResult struct {
@@ -366,7 +366,7 @@ func (c *lockClient) Unlock(ctx context.Context, params UnlockParams) (UnlockRes
 	released := false
 
 	// 2. XLock 확인 및 제거
-	if xlockID.Valid && xlockID.String == params.Owner {
+	if xlockID.Valid && xlockID.String == params.LockID {
 		updateQuery := fmt.Sprintf(`
 			UPDATE %s
 			SET xlock_id = NULL, x_expires_at = NULL
@@ -387,7 +387,7 @@ func (c *lockClient) Unlock(ctx context.Context, params UnlockParams) (UnlockRes
 
 	newSharedLocks := []SharedLockEntry{}
 	for _, lock := range sharedLocks {
-		if lock.LockID != params.Owner {
+		if lock.LockID != params.LockID {
 			newSharedLocks = append(newSharedLocks, lock)
 		} else {
 			released = true

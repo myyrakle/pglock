@@ -47,7 +47,7 @@ func testXLock(ctx context.Context, lockClient pglock.LockClient) {
 			fmt.Printf("[XLock] Try Lock %d\n", id)
 			_, err := lockClient.XLock(ctx, pglock.XLockParams{
 				Name:             "test_xlock",
-				Owner:            fmt.Sprintf("xlock_%d", id),
+				LockID:           fmt.Sprintf("xlock_%d", id),
 				TTLSeconds:       60,
 				IntervalDuration: 100 * time.Millisecond,
 			})
@@ -56,8 +56,8 @@ func testXLock(ctx context.Context, lockClient pglock.LockClient) {
 				return
 			}
 			defer lockClient.Unlock(ctx, pglock.UnlockParams{
-				Name:  "test_xlock",
-				Owner: fmt.Sprintf("xlock_%d", id),
+				Name:   "test_xlock",
+				LockID: fmt.Sprintf("xlock_%d", id),
 			})
 
 			fmt.Printf("[XLock] Locked %d\n", id)
@@ -87,8 +87,8 @@ func testUnlimitedSLock(ctx context.Context, lockClient pglock.LockClient) {
 				return
 			}
 			defer lockClient.Unlock(ctx, pglock.UnlockParams{
-				Name:  "test_unlimited_slock",
-				Owner: fmt.Sprintf("reader_%d", id),
+				Name:   "test_unlimited_slock",
+				LockID: fmt.Sprintf("reader_%d", id),
 			})
 
 			fmt.Printf("[UnlimitedSLock] Locked %d\n", id)
@@ -118,8 +118,8 @@ func testLimitedSLock(ctx context.Context, lockClient pglock.LockClient) {
 				return
 			}
 			defer lockClient.Unlock(ctx, pglock.UnlockParams{
-				Name:  "test_limited_slock",
-				Owner: fmt.Sprintf("reader_%d", id),
+				Name:   "test_limited_slock",
+				LockID: fmt.Sprintf("reader_%d", id),
 			})
 
 			fmt.Printf("[LimitedSLock] Locked %d (처음 3개는 즉시, 나머지는 대기 후 획득)\n", id)
@@ -155,7 +155,7 @@ func testSLockBlocksXLock(ctx context.Context, lockClient pglock.LockClient) {
 		defer cancel()
 		_, err := lockClient.XLock(ctx, pglock.XLockParams{
 			Name:             "test_slock_blocks_xlock",
-			Owner:            "writer_1",
+			LockID:           "writer_1",
 			TTLSeconds:       30,
 			IntervalDuration: 100 * time.Millisecond,
 		})
@@ -172,8 +172,8 @@ func testSLockBlocksXLock(ctx context.Context, lockClient pglock.LockClient) {
 	time.Sleep(1 * time.Second)
 	fmt.Println("[SLockBlocksXLock] SLock 해제 중...")
 	lockClient.Unlock(ctx, pglock.UnlockParams{
-		Name:  "test_slock_blocks_xlock",
-		Owner: "reader_1",
+		Name:   "test_slock_blocks_xlock",
+		LockID: "reader_1",
 	})
 	fmt.Println("[SLockBlocksXLock] SLock 해제 완료")
 
@@ -185,7 +185,7 @@ func testXLockBlocksSLock(ctx context.Context, lockClient pglock.LockClient) {
 	fmt.Println("[XLockBlocksSLock] XLock 획득 중...")
 	_, err := lockClient.XLock(ctx, pglock.XLockParams{
 		Name:             "test_xlock_blocks_slock",
-		Owner:            "writer_1",
+		LockID:           "writer_1",
 		TTLSeconds:       30,
 		IntervalDuration: 100 * time.Millisecond,
 	})
@@ -222,8 +222,8 @@ func testXLockBlocksSLock(ctx context.Context, lockClient pglock.LockClient) {
 	time.Sleep(1 * time.Second)
 	fmt.Println("[XLockBlocksSLock] XLock 해제 중...")
 	lockClient.Unlock(ctx, pglock.UnlockParams{
-		Name:  "test_xlock_blocks_slock",
-		Owner: "writer_1",
+		Name:   "test_xlock_blocks_slock",
+		LockID: "writer_1",
 	})
 	fmt.Println("[XLockBlocksSLock] XLock 해제 완료")
 
