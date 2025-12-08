@@ -1,6 +1,6 @@
 # pglock
 
-![](https://img.shields.io/badge/language-Go-00ADD8) ![](https://img.shields.io/badge/version-0.2.0-brightgreen) [![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+![](https://img.shields.io/badge/language-Go-00ADD8) ![](https://img.shields.io/badge/version-0.2.1-brightgreen) [![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 - Distributed Lock implementation using PostgreSQL
 
@@ -14,7 +14,7 @@
 install
 
 ```bash
-go get github.com/myyrakle/pglock@v0.2.0
+go get github.com/myyrakle/pglock@v0.2.1
 ```
 
 configuration
