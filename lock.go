@@ -280,23 +280,39 @@ func (c *lockClient) TrySLock(ctx context.Context, params TrySLockParams) (TrySL
 		if lock.ExpiresAt.After(time.Now()) {
 			if lock.LockID == params.LockID {
 				alreadyHasLock = true
+				// 자기 자신의 락도 validLocks에 일단 포함 (갱신용)
+				validLocks = append(validLocks, lock)
 			} else {
 				validLocks = append(validLocks, lock)
 			}
 		}
 	}
 
-	// 5. 개수 제한 확인
-	if !alreadyHasLock && maxSharedLocks != -1 && len(validLocks) >= maxSharedLocks {
-		return TrySLockResult{Acquired: false}, nil
+	// 5. 새로운 락 추가 여부 결정 및 개수 제한 확인
+	if !alreadyHasLock {
+		// 새 락을 추가할 때만 개수 제한 확인
+		if maxSharedLocks != -1 && len(validLocks) >= maxSharedLocks {
+			return TrySLockResult{Acquired: false}, nil
+		}
 	}
 
-	// 6. 새 SLock 추가
+	// 6. SLock 추가 또는 갱신
 	newExpiresAt := time.Now().Add(time.Duration(params.TTLSeconds) * time.Second)
-	validLocks = append(validLocks, SharedLockEntry{
-		LockID:    params.LockID,
-		ExpiresAt: newExpiresAt,
-	})
+	if alreadyHasLock {
+		// 기존 락 갱신
+		for i := range validLocks {
+			if validLocks[i].LockID == params.LockID {
+				validLocks[i].ExpiresAt = newExpiresAt
+				break
+			}
+		}
+	} else {
+		// 새 락 추가
+		validLocks = append(validLocks, SharedLockEntry{
+			LockID:    params.LockID,
+			ExpiresAt: newExpiresAt,
+		})
+	}
 
 	newSharedLocksJSON, err := json.Marshal(validLocks)
 	if err != nil {
