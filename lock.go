@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+const (
+	// DefaultRetryInterval is the default interval for retrying lock acquisition
+	DefaultRetryInterval = 100 * time.Millisecond
+)
+
 func (c *lockClient) createLockTable(ctx context.Context) error {
 	tableName := c.options.LockTableName
 
@@ -133,7 +138,7 @@ type XLockParams struct {
 	Name             string        // Lock Name: unique identifier for the lock
 	LockID           string        // Lock LockID: identifier for the entity requesting the lock
 	TTLSeconds       int           // Time-To-Live: duration in seconds for the lock
-	IntervalDuration time.Duration // Retry interval duration
+	IntervalDuration time.Duration // Retry interval duration (default value: 100ms)
 }
 
 type XLockResult struct {
@@ -142,6 +147,11 @@ type XLockResult struct {
 
 // Lock continuously attempts to acquire a distributed lock until successful.
 func (c *lockClient) XLock(ctx context.Context, params XLockParams) (XLockResult, error) {
+	// IntervalDuration이 0 이하면 기본값 사용 (타이트 루프 방지)
+	if params.IntervalDuration <= 0 {
+		params.IntervalDuration = DefaultRetryInterval
+	}
+
 	for {
 		result, err := c.TryXLock(ctx, TryXLockParams{
 			Name:       params.Name,
@@ -200,7 +210,7 @@ type SLockParams struct {
 	LockID           string        // Lock ID: identifier for the entity requesting the lock
 	TTLSeconds       int           // Time-To-Live: duration in seconds for the lock
 	MaxSharedLocks   int           // Maximum number of shared locks allowed (-1 for unlimited)
-	IntervalDuration time.Duration // Retry interval duration
+	IntervalDuration time.Duration // Retry interval duration (default value: 100ms)
 }
 
 // SLockResult represents the result of a shared lock acquisition
@@ -314,6 +324,11 @@ func (c *lockClient) TrySLock(ctx context.Context, params TrySLockParams) (TrySL
 
 // SLock continuously attempts to acquire a shared lock until successful.
 func (c *lockClient) SLock(ctx context.Context, params SLockParams) (SLockResult, error) {
+	// IntervalDuration이 0 이하면 기본값 사용 (타이트 루프 방지)
+	if params.IntervalDuration <= 0 {
+		params.IntervalDuration = DefaultRetryInterval
+	}
+
 	for {
 		result, err := c.TrySLock(ctx, TrySLockParams{
 			Name:           params.Name,
