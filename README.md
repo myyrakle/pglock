@@ -68,7 +68,7 @@ using
 	}
 	defer lockClient.Unlock(ctx, pglock.UnlockParams{
 		Name:  "test_lock",
-		Owner: fmt.Sprintf("test_lock_%d", i),
+		LockID: fmt.Sprintf("test_lock_%d", i),
 	})
 ```
 
