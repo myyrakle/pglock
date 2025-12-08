@@ -14,7 +14,7 @@
 install
 
 ```bash
-go get github.com/myyrakle/pglock@v0.1.0
+go get github.com/myyrakle/pglock@v0.2.0
 ```
 
 configuration

@@ -96,7 +96,9 @@ func (c *lockClient) TryXLock(ctx context.Context, params TryXLockParams) (TryXL
 	// 4. 유효한 SLock 확인
 	var sharedLocks []SharedLockEntry
 	if len(sharedLocksJSON) > 0 {
-		json.Unmarshal(sharedLocksJSON, &sharedLocks)
+		if err := json.Unmarshal(sharedLocksJSON, &sharedLocks); err != nil {
+			return TryXLockResult{}, fmt.Errorf("failed to parse shared_locks: %w", err)
+		}
 	}
 
 	for _, lock := range sharedLocks {
@@ -257,7 +259,9 @@ func (c *lockClient) TrySLock(ctx context.Context, params TrySLockParams) (TrySL
 	// 4. 만료되지 않은 SLock만 필터링
 	var sharedLocks []SharedLockEntry
 	if len(sharedLocksJSON) > 0 {
-		json.Unmarshal(sharedLocksJSON, &sharedLocks)
+		if err := json.Unmarshal(sharedLocksJSON, &sharedLocks); err != nil {
+			return TrySLockResult{}, fmt.Errorf("failed to parse shared_locks: %w", err)
+		}
 	}
 
 	validLocks := []SharedLockEntry{}
@@ -284,7 +288,10 @@ func (c *lockClient) TrySLock(ctx context.Context, params TrySLockParams) (TrySL
 		ExpiresAt: newExpiresAt,
 	})
 
-	newSharedLocksJSON, _ := json.Marshal(validLocks)
+	newSharedLocksJSON, err := json.Marshal(validLocks)
+	if err != nil {
+		return TrySLockResult{}, fmt.Errorf("failed to marshal shared_locks: %w", err)
+	}
 
 	// 7. shared_locks 업데이트
 	updateQuery := fmt.Sprintf(`
@@ -384,7 +391,9 @@ func (c *lockClient) Unlock(ctx context.Context, params UnlockParams) (UnlockRes
 	// 3. SLock 확인 및 제거
 	var sharedLocks []SharedLockEntry
 	if len(sharedLocksJSON) > 0 {
-		json.Unmarshal(sharedLocksJSON, &sharedLocks)
+		if err := json.Unmarshal(sharedLocksJSON, &sharedLocks); err != nil {
+			return UnlockResult{}, fmt.Errorf("failed to parse shared_locks: %w", err)
+		}
 	}
 
 	newSharedLocks := []SharedLockEntry{}
@@ -398,7 +407,10 @@ func (c *lockClient) Unlock(ctx context.Context, params UnlockParams) (UnlockRes
 
 	if len(newSharedLocks) != len(sharedLocks) {
 		// SLock이 제거되었으면 업데이트
-		newSharedLocksJSON, _ := json.Marshal(newSharedLocks)
+		newSharedLocksJSON, err := json.Marshal(newSharedLocks)
+		if err != nil {
+			return UnlockResult{}, fmt.Errorf("failed to marshal shared_locks: %w", err)
+		}
 		updateQuery := fmt.Sprintf(`
 			UPDATE %s
 			SET shared_locks = $1
