@@ -55,23 +55,44 @@ type TryXLockResult struct {
 // TryXLock attempts to acquire a distributed lock.
 // Returns the expiration time, whether the lock was acquired, and any error.
 func (c *lockClient) TryXLock(ctx context.Context, params TryXLockParams) (TryXLockResult, error) {
-	tx, err := c.db.BeginTx(ctx, nil)
+	transaction, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
 		return TryXLockResult{}, err
 	}
-	defer tx.Rollback()
 
 	tableName := c.options.LockTableName
+
+	xExpiresAtFromParams := sql.NullTime{
+		Time:  time.Now().Add(time.Duration(params.TTLSeconds) * time.Second),
+		Valid: true,
+	}
 
 	// 1. lock 행 생성 (없으면)
 	ensureQuery := fmt.Sprintf(`
 		INSERT INTO %s (name, xlock_id, x_expires_at, shared_locks, max_shared_locks)
-		VALUES ($1, NULL, NULL, '[]'::jsonb, -1)
-		ON CONFLICT (name) DO NOTHING;
+		VALUES ($1, $2, $3, '[]'::jsonb, -1)
+		ON CONFLICT (name) DO NOTHING
+		RETURNING name;
 	`, tableName)
-	_, err = tx.ExecContext(ctx, ensureQuery, params.Name)
+	result, err := transaction.ExecContext(ctx, ensureQuery, params.Name, params.LockID, xExpiresAtFromParams)
 	if err != nil {
+		_ = transaction.Rollback()
 		return TryXLockResult{}, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		_ = transaction.Rollback()
+		return TryXLockResult{}, err
+	}
+
+	if rowsAffected > 0 {
+		// 새로 생성되어 바로 획득 성공
+		if err := transaction.Commit(); err != nil {
+			return TryXLockResult{}, err
+		}
+
+		return TryXLockResult{ExpiresAt: xExpiresAtFromParams.Time, Acquired: true}, nil
 	}
 
 	// 2. FOR UPDATE로 행 잠금 및 현재 상태 조회
@@ -82,19 +103,21 @@ func (c *lockClient) TryXLock(ctx context.Context, params TryXLockParams) (TryXL
 		FOR UPDATE;
 	`, tableName)
 
+	var sharedLocksJSON []byte
 	var xlockID sql.NullString
 	var xExpiresAt sql.NullTime
-	var sharedLocksJSON []byte
 
-	err = tx.QueryRowContext(ctx, selectQuery, params.Name).Scan(
+	err = transaction.QueryRowContext(ctx, selectQuery, params.Name).Scan(
 		&xlockID, &xExpiresAt, &sharedLocksJSON,
 	)
 	if err != nil {
+		_ = transaction.Rollback()
 		return TryXLockResult{}, err
 	}
 
 	// 3. 기존 XLock 확인
 	if xlockID.Valid && xExpiresAt.Valid && xExpiresAt.Time.After(time.Now()) {
+		_ = transaction.Rollback()
 		return TryXLockResult{Acquired: false}, nil
 	}
 
@@ -102,6 +125,7 @@ func (c *lockClient) TryXLock(ctx context.Context, params TryXLockParams) (TryXL
 	var sharedLocks []SharedLockEntry
 	if len(sharedLocksJSON) > 0 {
 		if err := json.Unmarshal(sharedLocksJSON, &sharedLocks); err != nil {
+			_ = transaction.Rollback()
 			return TryXLockResult{}, fmt.Errorf("failed to parse shared_locks: %w", err)
 		}
 	}
@@ -109,6 +133,7 @@ func (c *lockClient) TryXLock(ctx context.Context, params TryXLockParams) (TryXL
 	for _, lock := range sharedLocks {
 		if lock.ExpiresAt.After(time.Now()) {
 			// 유효한 SLock이 존재
+			_ = transaction.Rollback()
 			return TryXLockResult{Acquired: false}, nil
 		}
 	}
@@ -121,13 +146,13 @@ func (c *lockClient) TryXLock(ctx context.Context, params TryXLockParams) (TryXL
 		WHERE name = $3;
 	`, tableName)
 
-	_, err = tx.ExecContext(ctx, updateQuery, params.LockID, newExpiresAt, params.Name)
+	_, err = transaction.ExecContext(ctx, updateQuery, params.LockID, newExpiresAt, params.Name)
 	if err != nil {
+		_ = transaction.Rollback()
 		return TryXLockResult{}, err
 	}
 
-	err = tx.Commit()
-	if err != nil {
+	if err := transaction.Commit(); err != nil {
 		return TryXLockResult{}, err
 	}
 
@@ -221,23 +246,55 @@ type SLockResult struct {
 // TrySLock attempts to acquire a shared lock (non-blocking).
 // Returns the expiration time, whether the lock was acquired, and any error.
 func (c *lockClient) TrySLock(ctx context.Context, params TrySLockParams) (TrySLockResult, error) {
-	tx, err := c.db.BeginTx(ctx, nil)
+	transaction, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
 		return TrySLockResult{}, err
 	}
-	defer tx.Rollback()
 
 	tableName := c.options.LockTableName
 
-	// 1. lock 행 생성 (없으면)
+	newExpiresAt := time.Now().Add(time.Duration(params.TTLSeconds) * time.Second)
+
+	// 1. lock 행 생성 (없으면) - SLock이므로 shared_locks에 초기 엔트리 추가
+	newLockEntry := SharedLockEntry{
+		LockID:    params.LockID,
+		ExpiresAt: newExpiresAt,
+	}
+	initialSharedLocks, err := json.Marshal([]SharedLockEntry{newLockEntry})
+	if err != nil {
+		_ = transaction.Rollback()
+		return TrySLockResult{}, fmt.Errorf("failed to marshal initial shared_locks: %w", err)
+	}
+
 	ensureQuery := fmt.Sprintf(`
 		INSERT INTO %s (name, xlock_id, x_expires_at, shared_locks, max_shared_locks)
-		VALUES ($1, NULL, NULL, '[]'::jsonb, $2)
-		ON CONFLICT (name) DO NOTHING;
+		VALUES ($1, NULL, NULL, $2::jsonb, $3)
+		ON CONFLICT (name) DO NOTHING
+		RETURNING name;
 	`, tableName)
-	_, err = tx.ExecContext(ctx, ensureQuery, params.Name, params.MaxSharedLocks)
+
+	result, err := transaction.ExecContext(
+		ctx, ensureQuery,
+		params.Name, initialSharedLocks, params.MaxSharedLocks,
+	)
 	if err != nil {
+		_ = transaction.Rollback()
 		return TrySLockResult{}, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		_ = transaction.Rollback()
+		return TrySLockResult{}, err
+	}
+
+	if rowsAffected > 0 {
+		// 새로 생성되어 바로 획득 성공
+		if err := transaction.Commit(); err != nil {
+			return TrySLockResult{}, err
+		}
+
+		return TrySLockResult{ExpiresAt: newExpiresAt, Acquired: true}, nil
 	}
 
 	// 2. FOR UPDATE로 행 잠금 및 현재 상태 조회
@@ -254,15 +311,17 @@ func (c *lockClient) TrySLock(ctx context.Context, params TrySLockParams) (TrySL
 	var sharedLocksJSON []byte
 	var maxSharedLocks int
 
-	err = tx.QueryRowContext(ctx, selectQuery, params.Name).Scan(
+	err = transaction.QueryRowContext(ctx, selectQuery, params.Name).Scan(
 		&xlockID, &xExpiresAt, &sharedLocksJSON, &maxSharedLocks,
 	)
 	if err != nil {
+		_ = transaction.Rollback()
 		return TrySLockResult{}, err
 	}
 
 	// 3. XLock 확인
 	if xlockID.Valid && xExpiresAt.Valid && xExpiresAt.Time.After(time.Now()) {
+		_ = transaction.Rollback()
 		return TrySLockResult{Acquired: false}, nil
 	}
 
@@ -270,6 +329,7 @@ func (c *lockClient) TrySLock(ctx context.Context, params TrySLockParams) (TrySL
 	var sharedLocks []SharedLockEntry
 	if len(sharedLocksJSON) > 0 {
 		if err := json.Unmarshal(sharedLocksJSON, &sharedLocks); err != nil {
+			_ = transaction.Rollback()
 			return TrySLockResult{}, fmt.Errorf("failed to parse shared_locks: %w", err)
 		}
 	}
@@ -292,12 +352,13 @@ func (c *lockClient) TrySLock(ctx context.Context, params TrySLockParams) (TrySL
 	if !alreadyHasLock {
 		// 새 락을 추가할 때만 개수 제한 확인
 		if maxSharedLocks != -1 && len(validLocks) >= maxSharedLocks {
+			_ = transaction.Rollback()
 			return TrySLockResult{Acquired: false}, nil
 		}
 	}
 
 	// 6. SLock 추가 또는 갱신
-	newExpiresAt := time.Now().Add(time.Duration(params.TTLSeconds) * time.Second)
+	// newExpiresAt는 line 250에서 이미 계산됨
 	if alreadyHasLock {
 		// 기존 락 갱신
 		for i := range validLocks {
@@ -316,6 +377,7 @@ func (c *lockClient) TrySLock(ctx context.Context, params TrySLockParams) (TrySL
 
 	newSharedLocksJSON, err := json.Marshal(validLocks)
 	if err != nil {
+		_ = transaction.Rollback()
 		return TrySLockResult{}, fmt.Errorf("failed to marshal shared_locks: %w", err)
 	}
 
@@ -325,13 +387,13 @@ func (c *lockClient) TrySLock(ctx context.Context, params TrySLockParams) (TrySL
 		SET shared_locks = $1
 		WHERE name = $2;
 	`, tableName)
-	_, err = tx.ExecContext(ctx, updateQuery, newSharedLocksJSON, params.Name)
+	_, err = transaction.ExecContext(ctx, updateQuery, newSharedLocksJSON, params.Name)
 	if err != nil {
+		_ = transaction.Rollback()
 		return TrySLockResult{}, err
 	}
 
-	err = tx.Commit()
-	if err != nil {
+	if err := transaction.Commit(); err != nil {
 		return TrySLockResult{}, err
 	}
 
